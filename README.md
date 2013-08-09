@@ -5,7 +5,7 @@ Iteration Story Progress Report
 
 This app shows a chart of remaining hours per story for an iteration.
 
-![Iteration-Completed-Work-BurnDown](https://raw.github.com/wrackzone/iteration-completed-work-burndown/master/iterationburndownwithpoints.png)
+![Iteration-Completed-Work-BurnDown](https://raw.github.com/wrackzone/iteration-story-progress-report/master/story-burndown-chart.png)
 
 
 ## License
