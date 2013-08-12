@@ -78,24 +78,51 @@ Ext.define('CustomApp', {
         console.log("snapshots",snapShotData);
         
         var metrics = [];
+        var metricsAfterSummary = [];
         var hcConfig = [ { name : "label" }];
         _.each(
             _.uniq(snapShotData, function (e) { return e["_UnformattedID"];}), 
             function (item) {
                 var id = item["_UnformattedID"];
                 console.log("item", id);
-                var metric = {
-                    as : "S" + id.toString(),
+                var metric1 = {
+                    as : "S" + id.toString()+"Remaining",
                     f : 'filteredSum',
                     field : 'TaskRemainingTotal',
                     filterField : '_UnformattedID',
                     filterValues : [id]
+                };
+                var metric2 = {
+                    as : "S" + id.toString()+"Total",
+                    f : 'filteredSum',
+                    field : 'TaskEstimateTotal',
+                    filterField : '_UnformattedID',
+                    filterValues : [id]
                 }
-                metrics.push(metric);
+                var summary =
+                {
+                    as: "S" + id.toString(), 
+                    f: function (row, index, summaryMetrics, seriesData) {
+                        var t = row["S"+id.toString()+"Total"];
+                        var r = row["S"+id.toString()+"Remaining"];
+                        return t > 0 ? ((t-r)/t)*100 : 0;                
+                    }
+                }
+                metricsAfterSummary.push(summary);
+                
+                metrics.push(metric1);
+                metrics.push(metric2);
     
+                // hcConfig.push( {
+                //     name : "S" + id.toString()+"Remaining", comment : item["Name"]
+                // });
+                // hcConfig.push( {
+                //     name : "S" + id.toString()+"Total", comment : item["Name"]
+                // });
                 hcConfig.push( {
                     name : "S" + id.toString(), comment : item["Name"]
                 });
+
             }
         );
         
@@ -103,7 +130,7 @@ Ext.define('CustomApp', {
           deriveFieldsOnInput: [],
           metrics: metrics,
           summaryMetricsConfig: [],
-          deriveFieldsAfterSummary: [],
+          deriveFieldsAfterSummary: metricsAfterSummary,
           granularity: lumenize.Time.DAY,
           tz: 'America/New_York',
           holidays: [],
@@ -156,15 +183,16 @@ Ext.define('CustomApp', {
                  line : {
                     zIndex : 1,
                     tooltip : {
-                        valueSuffix : ' hours'
+                        valueSuffix : ' Percent'
                     }
 
                  }
                 },
                  yAxis: {
                     min : 0,
+                    max : 100,
                     title: {
-                        text: 'Hours'
+                        text: '% Complete by Task Hours'
                     },
                     plotLines: [{
                         value: 0,
