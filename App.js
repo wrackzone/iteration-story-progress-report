@@ -3,14 +3,15 @@
 Ext.define('CustomApp', {
     extend: 'Rally.app.App',
     componentCls: 'app',
-    items: [
-        { xtype: 'container', itemId: 'iterationDropDown', columnWidth: 1 },
+    items: [ { xtype : 'container', layout : { type : 'table',columns : 2 },items : [
+            { xtype : 'container', itemId: 'iterationDropDown', columnWidth: 2 },
+            { xtype : 'rallycheckboxfield', itemId : 'flatCheckBox', fieldLabel : 'Show only "Flat"', columnWidth : 1,value : false }
+        ] },
         { xtype: 'container', itemId: 'chart1', columnWidth: 1 }    
     ],
     
     addIterationDropDown : function() {
         
-        // get the timebox scope for the page
         var timeboxScope = this.getContext().getTimeboxScope();
         if(timeboxScope) {
             var record = timeboxScope.getRecord();
@@ -18,8 +19,6 @@ Ext.define('CustomApp', {
             console.log("timebox",record);
             this.gIteration = record.data;
             this._onIterationSelect();
-            // var startDate = timeboxScope.getType() === 'iteration' ? 
-            //     record.get('StartDate') : record.get('ReleaseStartDate');
         } else {
             // add the iteration dropdown selector
             this.down("#iterationDropDown").add( {
@@ -51,7 +50,7 @@ Ext.define('CustomApp', {
                 load: this._onIterationSnapShotData,
                 scope : this
             },
-            fetch: ['ObjectID','Name', 'Priority','ScheduleState', 'PlanEstimate','TaskEstimateTotal','TaskRemainingTotal', '_UnformattedID' ],
+            fetch: ['ObjectID','Name', 'Priority','ScheduleState', 'PlanEstimate','TaskEstimateTotal','TaskRemainingTotal', '_UnformattedID','Blocked' ],
             hydrate: ['ScheduleState'],
             filters: [
                 {
@@ -112,16 +111,15 @@ Ext.define('CustomApp', {
                 
                 metrics.push(metric1);
                 metrics.push(metric2);
-    
-                // hcConfig.push( {
-                //     name : "S" + id.toString()+"Remaining", comment : item["Name"]
-                // });
-                // hcConfig.push( {
-                //     name : "S" + id.toString()+"Total", comment : item["Name"]
-                // });
-                hcConfig.push( {
+                
+                var hc = {
                     name : "S" + id.toString(), comment : item["Name"]
-                });
+                };
+                
+                if (item["Blocked"]==true) 
+                    hc.dashStyle = "ShortDot";
+    
+                hcConfig.push( hc );
 
             }
         );
@@ -147,20 +145,58 @@ Ext.define('CustomApp', {
         var hc = lumenize.arrayOfMaps_To_HighChartsSeries(calculator.getResults().seriesData, hcConfig);
         
         console.log(hc);
-        
+        this.ghc = hc;
         this._showChart(hc);
     },
     
-    _showChart : function(series) {
+    isFlat : function(series) {
+        var flat = false;
+        _.each(series["data"], function(x,i) { 
+//            console.log("x",x, (i>0 ? series["data"][i-1]:""));
+            if ( i > 0 && x != 0)
+                if ( x == series.data[i-1]) {
+                    console.log("true");
+                    flat = true;
+                }
+                    
+        })
+        return flat;
+    },
+    
+    _showChart : function() {
+        var that = this;
+        var series = this.ghc;
         var chart = this.down("#chart1");
         chart.removeAll();
+        var today = new Date();
+        console.log("today",today.toLocaleString());
+        // get checkbox value
+        var flat = (this.down("#flatCheckBox").getValue());
         
+        // remove nulls from chart
         series[1].data = _.map(series[1].data, function(d) { return _.isNull(d) ? 0 : d; });
+        
+        _.each ( series, function(s,i) {
+            if (i>0) {
+                s.data = _.map(s.data,function(d,x) {
+                    var dt = Date.parse(series[0].data[x]); 
+                    return ((dt > today) ? null :  d); 
+                });
+            }
+            
+        });
+        
+        var newSeries = null;
+        if (flat) {
+            newSeries = _.filter( series.slice(1,series.length), function(s) { return (that.isFlat(s));} );
+        } else {
+            newSeries = series.slice(1,series.length);
+        }
         
         var extChart = Ext.create('Rally.ui.chart.Chart', {
          chartData: {
             categories : series[0].data,
-            series : series.slice(1,series.length)
+            series : newSeries
          },
           chartConfig : {
                 chart: {
@@ -171,8 +207,9 @@ Ext.define('CustomApp', {
                 },                        
                 tooltip: {
                     formatter: function() {
+                        
                         return this.series.name + ':' + this.series.options.comment + '<br> The value for <b>'+ this.x +
-                    '</b> is <b>'+ this.y +'</b>';
+                    '</b> is <b>'+ Math.round(this.y) +'</b>';
                     }
                 },
                 legend: {
@@ -180,6 +217,7 @@ Ext.define('CustomApp', {
                             verticalAlign: 'bottom'
                 },
                 plotOptions : {
+                    
                  line : {
                     zIndex : 1,
                     tooltip : {
@@ -211,8 +249,10 @@ Ext.define('CustomApp', {
     },
 
     launch: function() {
-
+        console.log(this.getContext().getWorkspace());
+        var that = this;
         this.addIterationDropDown();
+        this.down("#flatCheckBox").on("change",function(){that._showChart();});
 
     }
 });
