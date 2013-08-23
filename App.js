@@ -16,7 +16,7 @@ Ext.define('CustomApp', {
         if(timeboxScope) {
             var record = timeboxScope.getRecord();
             var name = record.get('Name');
-            console.log("timebox",record);
+            
             this.gIteration = record.data;
             this._onIterationSelect();
         } else {
@@ -73,9 +73,6 @@ Ext.define('CustomApp', {
         
         var lumenize = window.parent.Rally.data.lookback.Lumenize;
         var snapShotData = _.map(data,function(d){return d.data});      
-
-        console.log("snapshots",snapShotData);
-        
         var metrics = [];
         var metricsAfterSummary = [];
         var hcConfig = [ { name : "label" }];
@@ -83,7 +80,7 @@ Ext.define('CustomApp', {
             _.uniq(snapShotData, function (e) { return e["_UnformattedID"];}), 
             function (item) {
                 var id = item["_UnformattedID"];
-                console.log("item", id);
+                
                 var metric1 = {
                     as : "S" + id.toString()+"Remaining",
                     f : 'filteredSum',
@@ -143,24 +140,26 @@ Ext.define('CustomApp', {
         calculator.addSnapshots(snapShotData, startOnISOString, upToDateISOString);
 
         var hc = lumenize.arrayOfMaps_To_HighChartsSeries(calculator.getResults().seriesData, hcConfig);
-        
-        console.log(hc);
         this.ghc = hc;
         this._showChart(hc);
     },
     
-    isFlat : function(series) {
-        var flat = false;
-        _.each(series["data"], function(x,i) { 
-//            console.log("x",x, (i>0 ? series["data"][i-1]:""));
-            if ( i > 0 && x != 0)
-                if ( x == series.data[i-1]) {
-                    console.log("true");
-                    flat = true;
-                }
+    isFlat : function(series,todayIndex) {
+        
+        if (todayIndex != -1 ) {
+            if (series[todayIndex] == series[todayIndex-1] == series[todayIndex-1])
+            return true;
+        }
+        return false;
+        // _.each(series["data"], function(x,i) { 
+        //     if ( i > 0 && x != 0)
+        //         if ( x == series.data[i-1]) {
+        //             console.log("true");
+        //             flat = true;
+        //         }
                     
-        })
-        return flat;
+        // })
+        // return flat;
     },
     
     _showChart : function() {
@@ -168,27 +167,35 @@ Ext.define('CustomApp', {
         var series = this.ghc;
         var chart = this.down("#chart1");
         chart.removeAll();
-        var today = new Date();
-        console.log("today",today.toLocaleString());
         // get checkbox value
         var flat = (this.down("#flatCheckBox").getValue());
         
         // remove nulls from chart
         series[1].data = _.map(series[1].data, function(d) { return _.isNull(d) ? 0 : d; });
         
+        // find index into series for today
+        var today = new Date();         
+        var todayIndex = -1;
+        _.each( series[0].data, function(x,i) {
+            var dt = new Date(Date.parse(x));
+            
+            if (todayIndex == -1 && dt > today)
+                todayIndex = i;
+        });
+
+        // set values for future dates to null
         _.each ( series, function(s,i) {
             if (i>0) {
                 s.data = _.map(s.data,function(d,x) {
-                    var dt = Date.parse(series[0].data[x]); 
-                    return ((dt > today) ? null :  d); 
+                    
+                    return ((todayIndex > 0 && x > todayIndex) ? null :  d);
                 });
             }
-            
         });
         
-        var newSeries = null;
+        var newSeries = [];
         if (flat) {
-            newSeries = _.filter( series.slice(1,series.length), function(s) { return (that.isFlat(s));} );
+            newSeries = _.filter( series.slice(1,series.length), function(s) { return (that.isFlat(s,todayIndex));} );
         } else {
             newSeries = series.slice(1,series.length);
         }
@@ -249,7 +256,7 @@ Ext.define('CustomApp', {
     },
 
     launch: function() {
-        console.log(this.getContext().getWorkspace());
+        
         var that = this;
         this.addIterationDropDown();
         this.down("#flatCheckBox").on("change",function(){that._showChart();});
