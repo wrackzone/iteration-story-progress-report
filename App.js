@@ -143,23 +143,16 @@ Ext.define('CustomApp', {
         this.ghc = hc;
         this._showChart(hc);
     },
-    
+
+    // return 'flat' if the % complete has been static for > 2 days, but not if it's zero or 100 (complete).    
     isFlat : function(series,todayIndex) {
-        
-        if (todayIndex != -1 ) {
-            if (series[todayIndex] == series[todayIndex-1] == series[todayIndex-1])
-            return true;
+        var flat = false;
+        if (todayIndex != -1 && todayIndex >= 2 ) {
+            if (series.data[todayIndex] != 0 && series.data[todayIndex] != 100 )
+                if (series.data[todayIndex] == series.data[todayIndex-1] && series.data[todayIndex] == series.data[todayIndex-2])
+                    flat = true;
         }
-        return false;
-        // _.each(series["data"], function(x,i) { 
-        //     if ( i > 0 && x != 0)
-        //         if ( x == series.data[i-1]) {
-        //             console.log("true");
-        //             flat = true;
-        //         }
-                    
-        // })
-        // return flat;
+        return flat;
     },
     
     _showChart : function() {
@@ -206,7 +199,9 @@ Ext.define('CustomApp', {
             series : newSeries
          },
           chartConfig : {
+              
                 chart: {
+                    
                 },
                 title: {
                 text: '',
