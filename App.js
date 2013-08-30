@@ -1,4 +1,5 @@
 // <script type="text/javascript" src="https://rally1.rallydev.com/apps/2.0rc1/sdk-debug.js"></script>
+
 // <script type="text/javascript" src="https://rally1.rallydev.com/apps/2.0rc1/lib/analytics/analytics-all.js"></script>
 Ext.define('CustomApp', {
     extend: 'Rally.app.App',
