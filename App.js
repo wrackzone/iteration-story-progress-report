@@ -1,5 +1,8 @@
 // <script type="text/javascript" src="https://rally1.rallydev.com/apps/2.0rc1/sdk-debug.js"></script>
 // <script type="text/javascript" src="https://rally1.rallydev.com/apps/2.0rc1/lib/analytics/analytics-all.js"></script>
+
+
+
 Ext.define('CustomApp', {
     extend: 'Rally.app.App',
     componentCls: 'app',
@@ -50,8 +53,8 @@ Ext.define('CustomApp', {
                 load: this._onIterationSnapShotData,
                 scope : this
             },
-            fetch: ['ObjectID','Name', 'Priority','ScheduleState', 'PlanEstimate','TaskEstimateTotal','TaskRemainingTotal', '_UnformattedID','Blocked' ],
-            hydrate: ['ScheduleState'],
+            fetch: ['ObjectID','Name', 'Priority','ScheduleState', 'PlanEstimate','TaskEstimateTotal','TaskRemainingTotal', '_UnformattedID','Blocked','_Type','_TypeHierarchy' ],
+            hydrate: ['ScheduleState','_TypeHierarchy'],
             filters: [
                 {
                     property: '_TypeHierarchy',
@@ -69,27 +72,38 @@ Ext.define('CustomApp', {
         
     },
     
+    _getFormattedID : function (item) {
+        var type = _.last(item["_TypeHierarchy"]);
+        var prefix = _.find( this.types, function (t) { 
+            var tname = t.get("Name").replace(/\s+/g, ''); // remove the space
+            return tname == type;
+        });
+        return prefix.get("IDPrefix") + item["_UnformattedID"];
+    },
+    
     _onIterationSnapShotData : function(store,data,success) {
         
+        var that = this;
         var lumenize = window.parent.Rally.data.lookback.Lumenize;
         var snapShotData = _.map(data,function(d){return d.data});      
         var metrics = [];
         var metricsAfterSummary = [];
         var hcConfig = [ { name : "label" }];
         _.each(
-            _.uniq(snapShotData, function (e) { return e["_UnformattedID"];}), 
+            _.uniq(snapShotData, function (e) { return that._getFormattedID(e);}), 
             function (item) {
                 var id = item["_UnformattedID"];
-                
+                var fid = that._getFormattedID(item);
+
                 var metric1 = {
-                    as : "S" + id.toString()+"Remaining",
+                    as : fid+"Remaining",
                     f : 'filteredSum',
                     field : 'TaskRemainingTotal',
                     filterField : '_UnformattedID',
                     filterValues : [id]
                 };
                 var metric2 = {
-                    as : "S" + id.toString()+"Total",
+                    as : fid+"Total",
                     f : 'filteredSum',
                     field : 'TaskEstimateTotal',
                     filterField : '_UnformattedID',
@@ -97,10 +111,10 @@ Ext.define('CustomApp', {
                 }
                 var summary =
                 {
-                    as: "S" + id.toString(), 
+                    as: fid, 
                     f: function (row, index, summaryMetrics, seriesData) {
-                        var t = row["S"+id.toString()+"Total"];
-                        var r = row["S"+id.toString()+"Remaining"];
+                        var t = row[fid+"Total"];
+                        var r = row[fid+"Remaining"];
                         return t > 0 ? ((t-r)/t)*100 : 0;                
                     }
                 }
@@ -110,7 +124,7 @@ Ext.define('CustomApp', {
                 metrics.push(metric2);
                 
                 var hc = {
-                    name : "S" + id.toString(), comment : item["Name"]
+                    name : fid, comment : item["Name"]
                 };
                 
                 if (item["Blocked"]==true) 
@@ -249,11 +263,42 @@ Ext.define('CustomApp', {
         var elems = p.query("div.x-mask-msg");
         _.each(elems, function(e) { e.remove(); });
     },
+    
+    getTypePrefixes : function() {
+        
+        var filter = Ext.create('Rally.data.QueryFilter', {
+            property: 'Name',
+            operator: '=',
+            value: 'Defect'
+        });
 
-    launch: function() {
+        var andedTogetherFilter = filter.or(Ext.create('Rally.data.QueryFilter', {
+            property: 'Name',
+            operator: '=',
+            value: 'Hierarchical Requirement'
+        }));
+        
+        var typeStore = Ext.create('Rally.data.WsapiDataStore', {
+            autoLoad: true,
+            model: 'TypeDefinition',
+            fetch: ['Name', 'IDPrefix' ],
+            filters: [
+                andedTogetherFilter
+            ],
+            listeners: {
+                load: function(store, recs ) {
+                    this.types = recs;
+                },
+                scope : this
+            }
+        });
+    },
+
+    launch : function() {
         
         var that = this;
         this.addIterationDropDown();
+        this.getTypePrefixes();
         this.down("#flatCheckBox").on("change",function(){that._showChart();});
 
     }
