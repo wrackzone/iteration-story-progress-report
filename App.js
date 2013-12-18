@@ -1,17 +1,45 @@
 // <script type="text/javascript" src="https://rally1.rallydev.com/apps/2.0rc1/sdk-debug.js"></script>
 // <script type="text/javascript" src="https://rally1.rallydev.com/apps/2.0rc1/lib/analytics/analytics-all.js"></script>
 
-
+var app = null;
 
 Ext.define('CustomApp', {
     extend: 'Rally.app.App',
     componentCls: 'app',
-    items: [ { xtype : 'container', layout : { type : 'table',columns : 2 },items : [
+    items: [ { xtype : 'container', layout : { type : 'table',columns : 3 },items : [
             { xtype : 'container', itemId: 'iterationDropDown', columnWidth: 2 },
-            { xtype : 'rallycheckboxfield', itemId : 'flatCheckBox', fieldLabel : 'Show only "Flat"', columnWidth : 1,value : false }
+            { xtype : 'rallycheckboxfield', itemId : 'flatCheckBox', fieldLabel : 'Show only "Flat"', columnWidth : 1,value : false },
+            { xtype : 'combobox', 
+                itemId : 'userComboBox', 
+                fieldLabel : 'Owner', 
+                columnWidth : 1, 
+                padding : 5,
+                displayField: '_refObjectName', 
+                valueField: '_ref', 
+                store : this.usersStore,
+                listeners :  { 
+                    select : function(combo, records, opts) {
+                        var ownerRec = records[0];
+                        var ownerArtifacts = [];
+                        if (ownerRec.get("_ref") !== "All") {
+                            ownerArtifacts = _.compact( _.map( app.artifacts, function(a) { 
+                                return a.get("Owner") && a.get("Owner")._ref === records[0].get("_ref") ?
+                                    a.get("artifact") : null;
+                            }));
+                        }
+                        console.log("ownerArtifacts",ownerArtifacts);
+                        app.ownerArtifacts = ownerArtifacts;
+                        // convert refs to object ids
+                        app._refreshChart();
+                    }
+                }
+            }
+
         ] },
         { xtype: 'container', itemId: 'chart1', columnWidth: 1 }    
     ],
+
+    usersStore : null,
     
     addIterationDropDown : function() {
         
@@ -45,6 +73,41 @@ Ext.define('CustomApp', {
         } 
         
         var iterationId = this.gIteration.ObjectID;
+
+        // first get stories, defects and tasks for the iteration so we can show a filter of users.
+        var configs = _.map(["HierarchicalRequirement","Defect","Task"],function(type) {
+            return {    model : type, 
+                        fetch : ['Owner','WorkProduct','ObjectID'], 
+                        filters : [{property:'Iteration.ObjectID', operator : "=", value: iterationId}]
+            };
+        });
+        console.log("configs:",configs);
+
+        async.map( configs, app.wsapiQuery, function( err, results ) {
+            app.artifacts = [];
+            app.artifacts = app.artifacts.concat( results[0], results[1], results[2]);
+            console.log("artifacts",app.artifacts);
+            _.each(app.artifacts,function(artifact) {
+                // set the artifact ref to be either the object itself (for story or defect) or the workproduct( for Task)
+                artifact.set("artifact", artifact.get("WorkProduct") !== undefined ? artifact.get("WorkProduct").ObjectID : artifact.get("ObjectID"));
+            });
+
+            // get distinct owners
+            var allOwners = _.compact(_.map(app.artifacts, function(a) { return a.get("Owner");}));
+            var owners = _.uniq( allOwners, function(o) { return o._ref; } );
+            owners.unshift({"_ref":"All", "_refObjectName":"All"});
+            console.log("owners",owners);
+
+            app.usersStore = Ext.create('Ext.data.Store', {
+                fields: ['_refObjectName','_ref'],
+                data : owners
+            });
+            app.down("#userComboBox").store = app.usersStore;
+            app.usersStore.load();
+            app.down("#userComboBox").select("All");
+            
+        });
+
         
         Ext.create('Rally.data.lookback.SnapshotStore', {
             autoLoad : true,
@@ -71,6 +134,23 @@ Ext.define('CustomApp', {
         
         
     },
+
+    wsapiQuery : function( config , callback ) {
+        Ext.create('Rally.data.WsapiDataStore', {
+            autoLoad : true,
+            limit : "Infinity",
+            model : config.model,
+            fetch : config.fetch,
+            filters : config.filters,
+            sorters : config.sorters,
+            listeners : {
+                scope : this,
+                load : function(store, data) {
+                    callback(null,data);
+                }
+            }
+        });
+    },
     
     _getFormattedID : function (item) {
         var type = _.last(item["_TypeHierarchy"]);
@@ -80,17 +160,31 @@ Ext.define('CustomApp', {
         });
         return prefix.get("IDPrefix") + item["_UnformattedID"];
     },
-    
+
     _onIterationSnapShotData : function(store,data,success) {
+
+        app.snapShotData = _.map(data,function(d){return d.data});
+
+        app._refreshChart();
+
+    },
+    
+    _refreshChart : function() {
         
         var that = this;
         var lumenize = window.parent.Rally.data.lookback.Lumenize;
-        var snapShotData = _.map(data,function(d){return d.data});      
+        // var snapShotData = _.map(data,function(d){return d.data});      
+        // filter to artifacts for selected owner
+        var snapShots = app.ownerArtifacts && app.ownerArtifacts.length > 0 ? 
+            _.filter(app.snapShotData,function(s) { return _.indexOf( app.ownerArtifacts, s.ObjectID) !== -1;}) : 
+            app.snapShotData;
+        console.log("Snapshots:",snapShots.length);
         var metrics = [];
         var metricsAfterSummary = [];
         var hcConfig = [ { name : "label" }];
         _.each(
-            _.uniq(snapShotData, function (e) { return that._getFormattedID(e);}), 
+            // _.uniq(app.snapShotData, function (e) { return that._getFormattedID(e);}), 
+            _.uniq(snapShots, function (e) { return that._getFormattedID(e);}), 
             function (item) {
                 var id = item["_UnformattedID"];
                 var fid = that._getFormattedID(item);
@@ -119,7 +213,6 @@ Ext.define('CustomApp', {
                     }
                 }
                 metricsAfterSummary.push(summary);
-                
                 metrics.push(metric1);
                 metrics.push(metric2);
                 
@@ -151,7 +244,7 @@ Ext.define('CustomApp', {
         var upToDateISOString = new lumenize.Time(this.gIteration.EndDate).getISOStringInTZ(config.tz)
 
         calculator = new lumenize.TimeSeriesCalculator(config);
-        calculator.addSnapshots(snapShotData, startOnISOString, upToDateISOString);
+        calculator.addSnapshots(snapShots, startOnISOString, upToDateISOString);
 
         var hc = lumenize.arrayOfMaps_To_HighChartsSeries(calculator.getResults().seriesData, hcConfig);
         this.ghc = hc;
@@ -174,6 +267,7 @@ Ext.define('CustomApp', {
         var series = this.ghc;
         var chart = this.down("#chart1");
         chart.removeAll();
+        // chart.destroy();
         // get checkbox value
         var flat = (this.down("#flatCheckBox").getValue());
         
@@ -295,7 +389,7 @@ Ext.define('CustomApp', {
     },
 
     launch : function() {
-        
+        app = this;
         var that = this;
         this.addIterationDropDown();
         this.getTypePrefixes();
