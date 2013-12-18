@@ -17,6 +17,12 @@ Ext.define('CustomApp', {
                 displayField: '_refObjectName', 
                 valueField: '_ref', 
                 store : this.usersStore,
+                // tpl: Ext.create('Ext.XTemplate', '<tpl for=".">','<div class="x-combo-list-item">{_refObjectName} {Active}</div>','</tpl>'),
+                listConfig: {
+                    getInnerTpl: function() {
+                        return '{_refObjectName} {Active}';
+                    }
+                },
                 listeners :  { 
                     select : function(combo, records, opts) {
                         var ownerRec = records[0];
@@ -64,20 +70,13 @@ Ext.define('CustomApp', {
         }
         
     },
-    
-    _onIterationSelect : function() {
 
-        if (_.isUndefined( this.getContext().getTimeboxScope())) {
-            var value =  this.down('#iterationSelector').getRecord();
-            this.gIteration = value.data;
-        } 
-        
-        var iterationId = this.gIteration.ObjectID;
+    _setupOwners : function(iterationId) {
 
-        // first get stories, defects and tasks for the iteration so we can show a filter of users.
+                // first get stories, defects and tasks for the iteration so we can show a filter of users.
         var configs = _.map(["HierarchicalRequirement","Defect","Task"],function(type) {
             return {    model : type, 
-                        fetch : ['Owner','WorkProduct','ObjectID'], 
+                        fetch : ['Owner','WorkProduct','ObjectID','State'], 
                         filters : [{property:'Iteration.ObjectID', operator : "=", value: iterationId}]
             };
         });
@@ -95,11 +94,21 @@ Ext.define('CustomApp', {
             // get distinct owners
             var allOwners = _.compact(_.map(app.artifacts, function(a) { return a.get("Owner");}));
             var owners = _.uniq( allOwners, function(o) { return o._ref; } );
+            console.log("owners",owners);
+            _.each(owners,function(o) {
+                var activeTasks = _.filter(app.artifacts,function(a){
+                    return a.get("State")!=="Completed" && 
+                        a.get("Owner")!== null && a.get("Owner")._ref === o._ref;
+                });
+                console.log(o._refObjectName,"active",activeTasks);
+                o["Active"] = activeTasks && activeTasks.length > 0 ? "(active)":"";
+            });
+
             owners.unshift({"_ref":"All", "_refObjectName":"All"});
             console.log("owners",owners);
 
             app.usersStore = Ext.create('Ext.data.Store', {
-                fields: ['_refObjectName','_ref'],
+                fields: ['_refObjectName','_ref','Active'],
                 data : owners
             });
             app.down("#userComboBox").store = app.usersStore;
@@ -108,6 +117,18 @@ Ext.define('CustomApp', {
             
         });
 
+
+    },
+    
+    _onIterationSelect : function() {
+
+        if (_.isUndefined( this.getContext().getTimeboxScope())) {
+            var value =  this.down('#iterationSelector').getRecord();
+            this.gIteration = value.data;
+        } 
+        
+        var iterationId = this.gIteration.ObjectID;
+        app._setupOwners(iterationId);
         
         Ext.create('Rally.data.lookback.SnapshotStore', {
             autoLoad : true,
