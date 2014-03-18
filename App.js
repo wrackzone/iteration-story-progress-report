@@ -1,5 +1,3 @@
-// <script type="text/javascript" src="https://rally1.rallydev.com/apps/2.0rc1/sdk-debug.js"></script>
-// <script type="text/javascript" src="https://rally1.rallydev.com/apps/2.0rc1/lib/analytics/analytics-all.js"></script>
 
 var app = null;
 
@@ -33,7 +31,7 @@ Ext.define('CustomApp', {
                                     a.get("artifact") : null;
                             }));
                         }
-                        console.log("ownerArtifacts",ownerArtifacts);
+                        // console.log("ownerArtifacts",ownerArtifacts);
                         app.ownerArtifacts = ownerArtifacts;
                         // convert refs to object ids
                         app._refreshChart();
@@ -61,6 +59,7 @@ Ext.define('CustomApp', {
             this.down("#iterationDropDown").add( {
                 xtype: 'rallyiterationcombobox',
                 itemId : 'iterationSelector',
+                allowNoEntry: true,
                 listeners: {
                         select: this._onIterationSelect,
                         ready:  this._onIterationSelect,
@@ -77,15 +76,19 @@ Ext.define('CustomApp', {
         var configs = _.map(["HierarchicalRequirement","Defect","Task"],function(type) {
             return {    model : type, 
                         fetch : ['Owner','WorkProduct','ObjectID','State'], 
-                        filters : [{property:'Iteration.ObjectID', operator : "=", value: iterationId}]
+                        filters : [ iterationId != null ? 
+                                        {property:'Iteration.ObjectID', operator : "=", value: iterationId} 
+                                        :
+                                        {property:'Iteration', operator : "=", value: null}
+                        ]
             };
         });
-        console.log("configs:",configs);
+        // console.log("configs:",configs);
 
         async.map( configs, app.wsapiQuery, function( err, results ) {
             app.artifacts = [];
             app.artifacts = app.artifacts.concat( results[0], results[1], results[2]);
-            console.log("artifacts",app.artifacts);
+            // console.log("artifacts",app.artifacts);
             _.each(app.artifacts,function(artifact) {
                 // set the artifact ref to be either the object itself (for story or defect) or the workproduct( for Task)
                 artifact.set("artifact", artifact.get("WorkProduct") !== undefined ? artifact.get("WorkProduct").ObjectID : artifact.get("ObjectID"));
@@ -94,18 +97,18 @@ Ext.define('CustomApp', {
             // get distinct owners
             var allOwners = _.compact(_.map(app.artifacts, function(a) { return a.get("Owner");}));
             var owners = _.uniq( allOwners, function(o) { return o._ref; } );
-            console.log("owners",owners);
+            // console.log("owners",owners);
             _.each(owners,function(o) {
                 var activeTasks = _.filter(app.artifacts,function(a){
                     return a.get("State")!=="Completed" && 
                         a.get("Owner")!== null && a.get("Owner")._ref === o._ref;
                 });
-                console.log(o._refObjectName,"active",activeTasks);
+                // console.log(o._refObjectName,"active",activeTasks);
                 o["Active"] = activeTasks && activeTasks.length > 0 ? "(active)":"";
             });
 
             owners.unshift({"_ref":"All", "_refObjectName":"All"});
-            console.log("owners",owners);
+            // console.log("owners",owners);
 
             app.usersStore = Ext.create('Ext.data.Store', {
                 fields: ['_refObjectName','_ref','Active'],
@@ -124,11 +127,51 @@ Ext.define('CustomApp', {
 
         if (_.isUndefined( this.getContext().getTimeboxScope())) {
             var value =  this.down('#iterationSelector').getRecord();
-            this.gIteration = value.data;
+            // console.log("value:",value);
+            if (value.get("Name")==="Unscheduled") {
+                this.gIteration = null;
+                return;
+            }
+
+            else
+                this.gIteration = value.data;
         } 
         
-        var iterationId = this.gIteration.ObjectID;
+        var iterationId = this.gIteration != null ?  this.gIteration.ObjectID : null;
         app._setupOwners(iterationId);
+
+        var filters=[];
+
+        if (this.gIteration!=null) {
+            filters = [
+                {
+                    property: '_ProjectHierarchy', operator: 'in',value: app.project
+                },
+                {
+                    property: '_TypeHierarchy', operator: 'in', value: ['Defect','HierarchicalRequirement']
+                },
+                {
+                    property: 'Iteration', operator: 'in', value: iterationId
+                }
+            ];
+        } else {
+            filters = [
+                {
+                    property: '_ProjectHierarchy', operator: 'in',value: app.project
+                },
+                {
+                    property: '_TypeHierarchy', operator: 'in', value: ['Defect','HierarchicalRequirement']
+                },
+                {
+                    property: 'Iteration', operator: '=', value: null
+                },
+                {
+                    property: '_ValidFrom', operator: '>', value: app.isoThirtyDays
+                }
+            ];
+        }
+
+        // console.log("filters",filters);
         
         Ext.create('Rally.data.lookback.SnapshotStore', {
             autoLoad : true,
@@ -137,20 +180,9 @@ Ext.define('CustomApp', {
                 load: this._onIterationSnapShotData,
                 scope : this
             },
-            fetch: ['ObjectID','Name', 'Priority','ScheduleState', 'PlanEstimate','TaskEstimateTotal','TaskRemainingTotal', '_UnformattedID','Blocked','_Type','_TypeHierarchy' ],
+            fetch: ['ObjectID','Name', 'Priority','ScheduleState', 'PlanEstimate','TaskEstimateTotal','TaskRemainingTotal', '_UnformattedID','Blocked','_Type','_TypeHierarchy','FormattedID' ],
             hydrate: ['ScheduleState','_TypeHierarchy'],
-            filters: [
-                {
-                    property: '_TypeHierarchy',
-                    operator: 'in',
-                    value: ['Defect','HierarchicalRequirement']
-                },
-                {
-                    property: 'Iteration',
-                    operator: 'in',
-                    value: iterationId
-                }
-            ]
+            filters: filters
         });        
         
         
@@ -174,6 +206,7 @@ Ext.define('CustomApp', {
     },
     
     _getFormattedID : function (item) {
+        // console.log("item",item);
         var type = _.last(item["_TypeHierarchy"]);
         var prefix = _.find( this.types, function (t) { 
             var tname = t.get("Name").replace(/\s+/g, ''); // remove the space
@@ -183,11 +216,8 @@ Ext.define('CustomApp', {
     },
 
     _onIterationSnapShotData : function(store,data,success) {
-
         app.snapShotData = _.map(data,function(d){return d.data});
-
         app._refreshChart();
-
     },
     
     _refreshChart : function() {
@@ -200,12 +230,29 @@ Ext.define('CustomApp', {
             _.filter(app.snapShotData,function(s) { return _.indexOf( app.ownerArtifacts, s.ObjectID) !== -1;}) : 
             app.snapShotData;
         console.log("Snapshots:",snapShots.length);
+
+        if (app.snapShotData.length==0) {
+            var chart = this.down("#chart1");
+            if (chart!=null)
+                chart.removeAll();
+            return;
+        }
+
         var metrics = [];
         var metricsAfterSummary = [];
         var hcConfig = [ { name : "label" }];
+
+        // complex code to get an array of the last snapshots for each story/defect
+        var latestSnapshots =
+        _.map( 
+            _.values( _.groupBy(snapShots,"FormattedID")), function(g) {
+                return _.last( _.sortBy( g, "_ValidFrom" ));
+            });
+
         _.each(
             // _.uniq(app.snapShotData, function (e) { return that._getFormattedID(e);}), 
-            _.uniq(snapShots, function (e) { return that._getFormattedID(e);}), 
+            // _.uniq(snapShots, function (e) { return that._getFormattedID(e);}), 
+            latestSnapshots,
             function (item) {
                 var id = item["_UnformattedID"];
                 var fid = that._getFormattedID(item);
@@ -238,9 +285,10 @@ Ext.define('CustomApp', {
                 metrics.push(metric2);
                 
                 var hc = {
-                    name : fid, comment : item["Name"]
+                    name : fid, comment : item["Name"], dataitem : item
                 };
                 
+                // console.log("blocked?",item["Blocked"],item["FormattedID"],item);
                 if (item["Blocked"]==true) 
                     hc.dashStyle = "ShortDot";
     
@@ -261,8 +309,17 @@ Ext.define('CustomApp', {
         };
     
         // release start and end dates
-        var startOnISOString = new lumenize.Time(this.gIteration.StartDate).getISOStringInTZ(config.tz)
-        var upToDateISOString = new lumenize.Time(this.gIteration.EndDate).getISOStringInTZ(config.tz)
+        var startOnISOString,upToDateISOString;
+        if (this.gIteration!=null) {
+            startOnISOString = new lumenize.Time(this.gIteration.StartDate).getISOStringInTZ(config.tz)
+            upToDateISOString = new lumenize.Time(this.gIteration.EndDate).getISOStringInTZ(config.tz)
+        } else {
+            var today = new Date();
+            var thirtydays = new Date();
+            thirtydays.setDate(today.getDate()-30);
+            startOnISOString = new lumenize.Time(today).getISOStringInTZ(config.tz)
+            upToDateISOString = new lumenize.Time(thirtydays).getISOStringInTZ(config.tz)
+        }
 
         calculator = new lumenize.TimeSeriesCalculator(config);
         calculator.addSnapshots(snapShots, startOnISOString, upToDateISOString);
@@ -338,9 +395,9 @@ Ext.define('CustomApp', {
                 },                        
                 tooltip: {
                     formatter: function() {
-                        
                         return this.series.name + ':' + this.series.options.comment + '<br> The value for <b>'+ this.x +
                     '</b> is <b>'+ Math.round(this.y) +'</b>';
+
                     }
                 },
                 legend: {
@@ -348,6 +405,17 @@ Ext.define('CustomApp', {
                             verticalAlign: 'bottom'
                 },
                 plotOptions : {
+                    series : { 
+                        point: {
+                            events: {
+                                click: function() { 
+                                    var item = this.series.options.dataitem;
+                                    var link = '/' + _.last(item._TypeHierarchy) + "/" + item.ObjectID;
+                                    Rally.nav.Manager.showDetail( link );
+                                }
+                            }
+                        }
+                    },
                     
                  line : {
                     zIndex : 1,
@@ -411,6 +479,13 @@ Ext.define('CustomApp', {
 
     launch : function() {
         app = this;
+        app.project = this.getContext().getProject().ObjectID;
+
+        var thirtydays = new Date();
+        thirtydays.setDate(thirtydays.getDate()-10);
+        app.isoThirtyDays = Rally.util.DateTime.toIsoString(new Date(thirtydays), true);
+        console.log("iso 30 days",app.isoThirtyDays);
+
         var that = this;
         this.addIterationDropDown();
         this.getTypePrefixes();
